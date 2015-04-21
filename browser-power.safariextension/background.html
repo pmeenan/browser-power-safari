@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script type="application/javascript">
+
+var NAVIGATE_DELAY = 0;
+var NAVIGATE_TIMEOUT = 60000;
+var SCROLL_DELAY = 1000;
+var SCROLL_COUNT = 60;
+var SCROLL_AMOUNT = 100;
+
+var g_isActive = false;
+var g_testID = undefined;
+var g_task = undefined;
+var g_taskTimer = undefined;
+var g_scrollCount = 0;
+
+function startTest() {
+	console.log("Starting test");
+	g_isActive = true;
+	try {
+	  var xhr = new XMLHttpRequest();
+	  xhr.open('GET', 'http://power.webpagetest.org/startTest.php', true);
+	  xhr.onreadystatechange = function() {
+	    if (xhr.readyState == 4) {
+	      if (xhr.responseText.length > 0) {
+	        try {
+	        	console.log(xhr.responseText);
+	          var resp = JSON.parse(xhr.responseText);
+	        } catch (err) {
+	          console.log('Error parsing response as JSON: ' +
+	                xhr.responseText.substr(0, 120) + '[...]\n');
+	        }
+	        if (resp.result == 200 && resp.id) {
+	        	g_testID = resp.id;
+	          	getNextTask();
+	        }
+	      }
+	    }
+	  };
+	  xhr.send();
+	} catch (err) {}
+}
+
+function getNextTask() {
+	g_task = undefined;
+	try {
+	  var xhr = new XMLHttpRequest();
+	  xhr.open('GET', 'http://power.webpagetest.org/getTask.php?test=' + g_testID, true);
+	  xhr.onreadystatechange = function() {
+	    if (xhr.readyState == 4) {
+	      if (xhr.responseText.length > 0) {
+	        try {
+	        	console.log(xhr.responseText);
+	          var resp = JSON.parse(xhr.responseText);
+	        } catch (err) {
+	          console.log('Error parsing response as JSON: ' +
+	                xhr.responseText.substr(0, 120) + '[...]\n');
+	        }
+	        if (resp.result == 200 && resp.task) {
+	        	g_task = resp.task;
+	        	g_task.loaded = false;
+	        	g_task.scrolled = false;
+	        	g_task.waited = false;
+	        	processTask();
+	        }
+	      }
+	    }
+	  };
+	  xhr.send();
+	} catch (err) {}
+}
+
+function scrollPage() {
+	console.log("Scroll Page");
+	if (g_scrollCount < SCROLL_COUNT) {
+		g_scrollCount += 1;
+		safari.application.activeBrowserWindow.activeTab.page.dispatchMessage("scroll", SCROLL_AMOUNT);
+		setTimeout(function() {scrollPage();}, SCROLL_DELAY);
+	} else {
+		processTask();
+	}
+}
+
+function processTask() {
+	console.log("processTask");
+	if (g_taskTimer !== undefined) {
+		clearTimeout(g_taskTimer);
+		g_taskTimer = undefined;
+	}
+
+	if (g_task !== undefined) {
+		if (!g_task.loaded) {
+			g_task.loaded = true;
+			g_task.loaded_ok = false;
+			g_taskTimer = setTimeout(function() {processTask();}, NAVIGATE_TIMEOUT);
+			safari.application.activeBrowserWindow.activeTab.url = g_task.url;
+		} else if (!g_task.waited && g_task.loaded_ok && g_task.wait > 0) {
+			g_task.waited = true;
+			setTimeout(function() {processTask();}, g_task.wait * 1000);
+		} else if (!g_task.scrolled && g_task.loaded_ok && g_task.scroll) {
+			g_task.scrolled = true;
+			g_scrollCount = 0;
+			setTimeout(function() {scrollPage();}, SCROLL_DELAY);
+		} else {
+			g_task = undefined;
+		}
+	}
+
+	if (g_task === undefined)
+		getNextTask();
+}
+
+function performCommand(event)
+{
+  if (event.command === "StartBatteryTest" && !g_isActive) {
+  	startTest();
+  }
+}
+ 
+function validateCommand(event)
+{
+  if (event.command === "StartBatteryTest") {
+    event.target.disabled = g_isActive;
+  }
+}
+
+safari.application.addEventListener("command", performCommand, false);
+safari.application.addEventListener("validate", validateCommand, false);
+safari.application.activeBrowserWindow.activeTab.addEventListener("navigate", function(){
+	console.log("onload");
+	if (g_isActive && g_task !== undefined) {
+		g_task.loaded_ok = true;
+		setTimeout(function() {processTask();}, NAVIGATE_DELAY);
+	}
+}, false);
+
+</script>
+</head>
+<body>
+</body>
+</html>
